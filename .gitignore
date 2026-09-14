@@ -1,0 +1,33 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+api.txt
+*.key
+
+# Data (large, regenerable, may contain cached API responses)
+data/
+*.parquet
+*.duckdb
+*.duckdb.wal
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Node / web
+node_modules/
+web/dist/
+web/build/
+.vercel/
+.netlify/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
