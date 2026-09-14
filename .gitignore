@@ -5,6 +5,11 @@
 api.txt
 *.key
 
+# Office / document files — pitch decks and templates live outside the repo
+*.pptx
+*.pdf
+*.docx
+
 # Data (large, regenerable, may contain cached API responses)
 data/
 *.parquet
