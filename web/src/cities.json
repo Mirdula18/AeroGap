@@ -1,0 +1,5 @@
+[
+  { "id": "india", "label": "All India", "longitude": 80.5, "latitude": 22.5, "zoom": 3.9 },
+  { "id": "delhi-ncr", "label": "Delhi-NCR", "longitude": 77.15, "latitude": 28.6, "zoom": 8.6 },
+  { "id": "coimbatore-tiruppur", "label": "Coimbatore–Tiruppur", "longitude": 77.15, "latitude": 11.05, "zoom": 8.7 }
+]
