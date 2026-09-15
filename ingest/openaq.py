@@ -41,6 +41,7 @@ import gzip
 import io
 import json
 import logging
+import math
 import re
 import sys
 import threading
@@ -84,6 +85,21 @@ SENTINELS = {999.0, 999.9, 999.99, 9999.0, 99999.0}
 # Hourly surface wind above 25 m/s (~90 km/h sustained for an hour) is a
 # sensor or unit error at these stations, not weather.
 WIND_SPEED_MAX_MS = 25.0
+
+# Sensor quality on the PM channels. Rows are FLAGGED, never deleted: readers
+# filter with USABLE_QUALITY, so the rule is reversible and the detections stay
+# visible as evidence of broken monitors.
+PM_PARAMETERS = ("pm25", "pm10")
+PLACEHOLDER_VALUES = (985.0, 1985.0)  # saturation / fill codes seen in CPCB-network feeds
+STUCK_RUN_HOURS = 24                  # identical consecutive value spanning a full day
+USABLE_QUALITY = ("ok", "unchecked")  # "unchecked" = parameter the PM rules don't cover
+
+# Station health, judged on the station's PM2.5 channel (PM10 if it has no PM2.5).
+HEALTH_MIN_COVERAGE = 0.50     # below: intermittent
+HEALTH_STUCK_SHARE = 0.20      # at or above: stuck
+HEALTH_DEAD_COVERAGE = 0.05    # below: dead
+HEALTH_DEAD_SILENT_DAYS = 30   # no usable reading in the corpus's final N days: dead
+HEALTH_COLUMNS = ["health", "health_reason", "pm_channel", "usable_coverage", "flagged_share", "last_usable_utc"]
 
 # Generous physical ceilings in the archive's native units. Above these a
 # reading is an instrument fault, not pollution. Keys: (parameter, unit).
@@ -535,6 +551,135 @@ def print_state_drops(drops: DropLog, reason: str) -> None:
         print(line)
 
 
+# --------------------------------------------------------------------------- quality flags & station health
+
+
+def quality_flags(df: pd.DataFrame) -> pd.Series:
+    """ok / stuck_placeholder / stuck_run for one parameter's rows (station_id, timestamp_utc, value)."""
+    s = df.sort_values(["station_id", "timestamp_utc"], kind="stable")
+    new_run = ((s["station_id"] != s["station_id"].shift()) | (s["value"] != s["value"].shift())
+               | (s["timestamp_utc"].diff() > pd.Timedelta(minutes=61)))
+    run = new_run.cumsum()
+    ts = s.groupby(run)["timestamp_utc"]
+    span = ts.transform("max") - ts.transform("min")
+    flags = pd.Series("ok", index=s.index, dtype=object)
+    # 24 hourly readings span 23 h; measuring span (not row count) keeps 15-minute feeds honest.
+    flags[span >= pd.Timedelta(hours=STUCK_RUN_HOURS - 1)] = "stuck_run"
+    flags[s["value"].isin(PLACEHOLDER_VALUES)] = "stuck_placeholder"
+    return flags.reindex(df.index)
+
+
+def flag_quality_history(states: set[str] | None = None) -> pd.DataFrame:
+    """Add or refresh quality_flag on every history file. Idempotent; no row is removed."""
+    groups: dict[tuple[str, str], list[Path]] = defaultdict(list)
+    for path in sorted(OUT_DIR.glob("state=*/parameter=*/month=*/*.parquet")):
+        keys = dict(part.split("=", 1) for part in path.parts[-4:-1])
+        groups[(unquote(keys["state"]), unquote(keys["parameter"]))].append(path)
+
+    counts = []
+    for (state, parameter), paths in sorted(groups.items()):
+        if states and state not in states:
+            continue
+        tables = [pq.read_table(p, partitioning=None) for p in paths]
+        tables = [t.drop_columns(["quality_flag"]) if "quality_flag" in t.column_names else t for t in tables]
+        if parameter in PM_PARAMETERS:
+            # All months together: a stuck run can straddle a month boundary.
+            df = pa.concat_tables([t.select(["station_id", "timestamp_utc", "value"]) for t in tables]).to_pandas()
+            flags = quality_flags(df).to_numpy(dtype=object)
+        else:
+            flags = np.full(sum(t.num_rows for t in tables), "unchecked", dtype=object)
+        offset = 0
+        for path, table in zip(paths, tables):
+            column = pa.array(flags[offset:offset + table.num_rows], type=pa.string())
+            offset += table.num_rows
+            out = table.append_column("quality_flag", column).replace_schema_metadata(None)
+            tmp = path.with_suffix(".tmp")
+            pq.write_table(out, tmp)
+            tmp.replace(path)
+        counts.append({"state": state, "parameter": parameter, **pd.Series(flags).value_counts().to_dict()})
+    return pd.DataFrame(counts).fillna(0)
+
+
+def classify_stations(stuck_share: float = HEALTH_STUCK_SHARE) -> pd.DataFrame:
+    """healthy / intermittent / stuck / dead per station, persisted to _stations.parquet."""
+    import pyarrow.compute as pc
+
+    stations = pd.read_parquet(OUT_DIR / "_stations.parquet")
+    stations = stations.drop(columns=[c for c in HEALTH_COLUMNS if c in stations.columns])
+    tbl = ds.dataset(OUT_DIR, format="parquet", partitioning="hive").to_table(
+        filter=ds.field("parameter").isin(list(PM_PARAMETERS)),
+        columns=["station_id", "parameter", "timestamp_utc", "quality_flag"])
+    mm = pc.min_max(tbl["timestamp_utc"])
+    t0, t1 = pd.Timestamp(mm["min"].as_py()), pd.Timestamp(mm["max"].as_py())
+    window_hours = (t1 - t0).total_seconds() / 3600 + 1
+
+    by_flag = (tbl.group_by(["station_id", "parameter", "quality_flag"])
+               .aggregate([("timestamp_utc", "count")]).to_pandas()
+               .pivot_table(index=["station_id", "parameter"], columns="quality_flag",
+                            values="timestamp_utc_count", aggfunc="sum", fill_value=0)
+               .reindex(columns=["ok", "stuck_placeholder", "stuck_run"], fill_value=0))
+    ok = tbl.filter(pc.equal(tbl["quality_flag"], "ok"))
+    ok_hours = (pa.table({"station_id": ok["station_id"], "parameter": ok["parameter"],
+                          "hour": pc.floor_temporal(ok["timestamp_utc"], unit="hour")})
+                .group_by(["station_id", "parameter"])
+                .aggregate([("hour", "count_distinct"), ("hour", "max")]).to_pandas()
+                .set_index(["station_id", "parameter"]))
+    chan = by_flag.join(ok_hours, how="left").reset_index()
+    chan["rank"] = chan["parameter"].map({"pm25": 0, "pm10": 1})
+    chan = chan.sort_values("rank").drop_duplicates("station_id").set_index("station_id")
+
+    def classify(sid: str) -> tuple:
+        if sid not in chan.index:
+            return "dead", "no PM2.5 or PM10 readings", None, 0.0, None, pd.NaT
+        r = chan.loc[sid]
+        rows = r["ok"] + r["stuck_placeholder"] + r["stuck_run"]
+        flagged = (r["stuck_placeholder"] + r["stuck_run"]) / rows if rows else 0.0
+        coverage = (r["hour_count_distinct"] or 0) / window_hours if pd.notna(r["hour_count_distinct"]) else 0.0
+        last = pd.Timestamp(r["hour_max"]) if pd.notna(r["hour_max"]) else pd.NaT
+        p = r["parameter"]
+        if flagged >= stuck_share:
+            reason = (f"{100 * flagged:.0f}% of {p} readings flagged "
+                      f"({int(r['stuck_placeholder']):,} placeholder, {int(r['stuck_run']):,} in day-long flat runs)")
+            return "stuck", reason, p, coverage, flagged, last
+        silent = (t1 - last).days if pd.notna(last) else math.inf
+        if coverage < HEALTH_DEAD_COVERAGE or silent > HEALTH_DEAD_SILENT_DAYS:
+            since = f"last usable reading {last:%Y-%m-%d}" if pd.notna(last) else "no usable reading"
+            return "dead", f"usable {p} coverage {100 * coverage:.0f}%, {since}", p, coverage, flagged, last
+        if coverage < HEALTH_MIN_COVERAGE:
+            return "intermittent", f"usable {p} coverage {100 * coverage:.0f}%", p, coverage, flagged, last
+        return "healthy", f"usable {p} coverage {100 * coverage:.0f}%", p, coverage, flagged, last
+
+    health = pd.DataFrame([classify(s) for s in stations["station_id"]], columns=HEALTH_COLUMNS)
+    stations = pd.concat([stations.reset_index(drop=True), health], axis=1)
+    stations["usable_coverage"] = stations["usable_coverage"].astype(float).round(3)
+    stations["flagged_share"] = stations["flagged_share"].astype(float).round(3)
+    stations.to_parquet(OUT_DIR / "_stations.parquet", index=False)
+    return stations
+
+
+def run_quality_pass(states: set[str] | None = None) -> None:
+    counts = flag_quality_history(states)
+    pm = counts[counts["parameter"].isin(PM_PARAMETERS)].set_index(["state", "parameter"])
+    flag_cols = [c for c in ("ok", "stuck_placeholder", "stuck_run") if c in pm.columns]
+    totals = pm[flag_cols].groupby(level="parameter").sum().astype(int)
+    totals["flagged_pct"] = (100 * totals[[c for c in flag_cols if c != "ok"]].sum(axis=1)
+                             / totals[flag_cols].sum(axis=1)).round(2)
+    print("\nquality_flag on PM channels (rows kept; readers filter with USABLE_QUALITY)")
+    print(totals.to_string())
+    flagged_by_state = pm[[c for c in flag_cols if c != "ok"]].sum(axis=1).groupby(level="state").sum()
+    print("\nflagged PM rows by state (top 10):")
+    print(flagged_by_state.sort_values(ascending=False).head(10).astype(int).to_string())
+
+    stations = classify_stations()
+    print(f"\nstation health (on PM2.5, PM10 if no PM2.5): {stations['health'].value_counts().to_dict()}")
+    print(f"rules: stuck >= {100 * HEALTH_STUCK_SHARE:.0f}% readings flagged; dead < {100 * HEALTH_DEAD_COVERAGE:.0f}% "
+          f"usable coverage or silent > {HEALTH_DEAD_SILENT_DAYS} days; intermittent < {100 * HEALTH_MIN_COVERAGE:.0f}%")
+    for label in ("stuck", "dead"):
+        sub = stations[stations["health"] == label].sort_values("flagged_share", ascending=False)
+        print(f"\n{label} ({len(sub)}):")
+        print(sub[["station_name", "state", "health_reason"]].head(15).to_string(index=False))
+
+
 def clean_month(frames: list[pd.DataFrame], locs: pd.DataFrame, drops: DropLog,
                 state: str | None = None) -> pd.DataFrame:
     df = pd.concat(frames, ignore_index=True)
@@ -742,6 +887,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--refilter", nargs="?", const="all", metavar="PARAMS",
                         help="re-apply value rules to data/history in place (no download, no raw cache); "
                              "optionally a comma-separated parameter list, e.g. wind_speed")
+    parser.add_argument("--flag-quality", action="store_true",
+                        help="(re)compute quality_flag on data/history in place and classify station health "
+                             "into _stations.parquet; no rows are deleted")
     args = parser.parse_args(argv)
     only_ids = [int(x) for x in args.location_ids.split(",")] if args.location_ids else None
     args.country = args.country.upper()
@@ -767,6 +915,10 @@ def main(argv: list[str] | None = None) -> int:
                 "dropped_by_reason": dict(drops.counts),
                 "dropped_by_state": {k: dict(v) for k, v in drops.by_state.items() if k != "_rows_checked"}})
             summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+        return 0
+
+    if args.flag_quality:
+        run_quality_pass()
         return 0
 
     snapshot_dir = RAW_DIR / (args.snapshot or args.country)
@@ -799,6 +951,7 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("no rows found for this query")
         return 1
     summarise(drops, stats, stations, args)
+    run_quality_pass(set(locs["state"]))
     return 0
 
 

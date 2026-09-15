@@ -50,6 +50,8 @@ import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
 
+from ingest.openaq import USABLE_QUALITY
+
 ROOT = Path(__file__).resolve().parents[1]
 HISTORY = ROOT / "data" / "history"
 OUT_DIR = ROOT / "data" / "validation"
@@ -85,7 +87,9 @@ class Corpus:
 
 def load_corpus(parameter: str, freq: str, res: int) -> Corpus:
     dataset = ds.dataset(HISTORY, format="parquet", partitioning="hive")
-    t = dataset.to_table(filter=ds.field("parameter") == parameter,
+    # Usable rows only: stuck placeholders and day-long flat runs are flagged in the corpus, filtered here.
+    t = dataset.to_table(filter=(ds.field("parameter") == parameter)
+                         & ds.field("quality_flag").isin(list(USABLE_QUALITY)),
                          columns=["station_id", "timestamp_utc", "value"]).to_pandas()
     if t.empty:
         sys.exit(f"no {parameter} readings in {HISTORY}")

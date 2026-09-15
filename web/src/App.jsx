@@ -22,7 +22,16 @@ const BINS = [
   { max: 200, label: "100–200", color: "#184f95" },
   { max: Infinity, label: "200+", color: "#0d366b" },
 ];
-const STATION_COLOR = [235, 104, 52]; // categorical slot 2 (orange), distinct from the blue ramp
+// Monitor health uses the reserved status palette, always paired with a label (legend + tooltip)
+// and a shape cue: filled = delivers usable data, hollow ring = reports garbage or nothing.
+const HEALTH = {
+  healthy: { label: "Healthy", fill: [12, 163, 12, 255], line: [252, 252, 251, 255], width: 2, radius: 5 },
+  intermittent: { label: "Intermittent (<50% usable)", fill: [250, 178, 25, 255], line: [252, 252, 251, 255], width: 2, radius: 4 },
+  stuck: { label: "Stuck sensor", fill: [252, 252, 251, 0], line: [236, 131, 90, 255], width: 3, radius: 5.5 },
+  dead: { label: "Dead (no usable data)", fill: [137, 135, 129, 255], line: [208, 59, 59, 255], width: 3, radius: 5.5 },
+};
+const HEALTH_ORDER = ["healthy", "intermittent", "stuck", "dead"];
+const healthOf = (d) => (HEALTH[d.health] ? d.health : "healthy");
 
 const hexToRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 const BIN_RGB = BINS.map((b) => hexToRgb(b.color));
@@ -91,6 +100,16 @@ export default function App() {
     };
   }, []);
 
+  // Unhealthy monitors drawn last so they sit on top of healthy neighbours.
+  const stationsByHealth = useMemo(
+    () => [...stations].sort((a, b) => HEALTH_ORDER.indexOf(healthOf(a)) - HEALTH_ORDER.indexOf(healthOf(b))),
+    [stations]
+  );
+  const healthCounts = useMemo(
+    () => stations.reduce((acc, s) => ({ ...acc, [healthOf(s)]: (acc[healthOf(s)] || 0) + 1 }), {}),
+    [stations]
+  );
+
   const hexRows = useMemo(() => {
     if (!grid) return [];
     return grid.h3.map((h, i) => ({ h3: h, d: grid.dist_km[i], s: grid.station_count[i] }));
@@ -115,21 +134,22 @@ export default function App() {
         }),
         new ScatterplotLayer({
           id: "stations",
-          data: stations,
+          data: stationsByHealth,
           getPosition: (d) => [d.lon, d.lat],
-          getFillColor: STATION_COLOR,
-          getLineColor: [252, 252, 251],
+          getFillColor: (d) => HEALTH[healthOf(d)].fill,
+          getLineColor: (d) => HEALTH[healthOf(d)].line,
           lineWidthUnits: "pixels",
-          getLineWidth: 2,
+          getLineWidth: (d) => HEALTH[healthOf(d)].width,
           stroked: true,
+          filled: true,
           radiusUnits: "pixels",
-          getRadius: 5,
+          getRadius: (d) => HEALTH[healthOf(d)].radius,
           pickable: true,
           onHover: (info) => setHover(info.object ? { kind: "station", x: info.x, y: info.y, ...info.object } : null),
         }),
       ],
     });
-  }, [hexRows, stations, grid]);
+  }, [hexRows, stationsByHealth, grid]);
 
   const flyTo = (city) => {
     setActive(city.id);
@@ -166,15 +186,21 @@ export default function App() {
               </div>
             ))}
           </div>
-          <div className="legend-station">
-            <span className="dot" /> Monitoring station ({stations.length.toLocaleString()})
-          </div>
+          <div className="legend-title legend-monitors">Monitors ({stations.length.toLocaleString()})</div>
+          {HEALTH_ORDER.map((k) => (
+            <div key={k} className="legend-station">
+              <span className={`marker marker-${k}`} />
+              <span className="legend-label">{HEALTH[k].label}</span>
+              <span className="legend-count">{(healthCounts[k] || 0).toLocaleString()}</span>
+            </div>
+          ))}
         </div>
 
         <p className="status">{status}</p>
         <p className="footnote">
-          Stations: OpenAQ (CPCB/state networks, low-cost sensors), last 12 months. No predictions yet: this view
-          shows the gap, not the pollution.
+          Stations: OpenAQ (CPCB/state networks, low-cost sensors), last 12 months. A monitor stuck on a placeholder
+          value or silent for weeks counts as a gap, not coverage. No predictions yet: this view shows the gap, not
+          the pollution.
         </p>
       </aside>
 
@@ -193,6 +219,10 @@ export default function App() {
               <div className="muted">
                 {[hover.city, hover.state].filter(Boolean).join(", ")}
               </div>
+              <div>
+                <span className={`marker marker-${healthOf(hover)} marker-inline`} /> {HEALTH[healthOf(hover)].label}
+              </div>
+              {hover.health_reason && <div className="muted">{hover.health_reason}</div>}
               {hover.rows != null && (
                 <div className="muted">
                   {hover.rows.toLocaleString()} readings

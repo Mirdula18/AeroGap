@@ -109,7 +109,8 @@ def load_stations(path: Path) -> pd.DataFrame:
         log.warning("using discovery index %s: stations have no reading counts yet", path.name)
         df = df.rename(columns={"name": "station_name"}).assign(
             station_id="openaq-" + df["location_id"].astype(str), rows=pd.NA, last_seen=pd.NaT)
-    return df[["station_id", "station_name", "lat", "lon", "city", "state", "rows", "last_seen"]]
+    health = [c for c in ("health", "health_reason", "usable_coverage") if c in df.columns]
+    return df[["station_id", "station_name", "lat", "lon", "city", "state", "rows", "last_seen"] + health]
 
 
 def nearest_station(grid: pd.DataFrame, stations: pd.DataFrame, chunk: int = 20_000) -> tuple[np.ndarray, np.ndarray]:
@@ -183,6 +184,11 @@ def main(argv: list[str] | None = None) -> int:
     grid["station_count"] = grid["h3"].map(counts).fillna(0).astype("int16")
     grid["dist_km"], grid["nearest_station_id"] = nearest_station(grid, stations)
     grid["dist_km"] = grid["dist_km"].astype("float32")
+    # A monitor reporting garbage is as absent as no monitor: distance to the nearest HEALTHY one.
+    working = stations[stations["health"] == "healthy"].reset_index(drop=True) if "health" in stations else None
+    if working is not None and len(working):
+        grid["dist_working_km"], grid["nearest_working_station_id"] = nearest_station(grid, working)
+        grid["dist_working_km"] = grid["dist_working_km"].astype("float32")
 
     full = OUT_DIR / f"grid_r{args.res}.parquet"
     slim = OUT_DIR / f"grid_r{args.res}_api.parquet"
@@ -203,15 +209,31 @@ def main(argv: list[str] | None = None) -> int:
           f"  ({len(outside)} fall outside the grid, still used for distance)")
     print(f"hexes with station {int((grid['station_count'] > 0).sum()):,}  "
           f"({100 * (grid['station_count'] > 0).mean():.3f}% of the country)")
-    print("\ndistance to nearest station")
-    for q, v in zip([50, 75, 90, 99], np.percentile(grid["dist_km"], [50, 75, 90, 99])):
-        print(f"  p{q:<3} {v:8.1f} km")
+    has_working = "dist_working_km" in grid
+    if "health" in stations:
+        print(f"station health     {stations['health'].value_counts().to_dict()}")
+    print("\ndistance to nearest station" + ("        nominal    working (healthy only)" if has_working else ""))
+    for q in (50, 75, 90, 99):
+        line = f"  p{q:<3} {np.percentile(grid['dist_km'], q):8.1f} km"
+        if has_working:
+            line += f"   {np.percentile(grid['dist_working_km'], q):8.1f} km"
+        print(line)
     for km in (10, 25, 50, 100):
-        print(f"  share of hexes > {km:>3} km from any station: {100 * (grid['dist_km'] > km).mean():5.1f}%")
-    by_state = grid.groupby("state").agg(hexes=("h3", "size"), median_km=("dist_km", "median"),
-                                         pct_over_50km=("dist_km", lambda d: 100 * (d > 50).mean()))
+        line = f"  share of hexes > {km:>3} km: {100 * (grid['dist_km'] > km).mean():5.1f}%"
+        if has_working:
+            line += f"      {100 * (grid['dist_working_km'] > km).mean():5.1f}%"
+        print(line)
+    agg = {"hexes": ("h3", "size"), "median_km": ("dist_km", "median"),
+           "pct_over_50km": ("dist_km", lambda d: 100 * (d > 50).mean())}
+    if has_working:
+        agg["median_working_km"] = ("dist_working_km", "median")
+    by_state = grid.groupby("state").agg(**agg)
     by_state["stations"] = stations.groupby("state").size()
-    by_state = by_state.fillna({"stations": 0}).astype({"stations": int}).sort_values("median_km")
+    fill = {"stations": 0}
+    if "health" in stations:
+        by_state["healthy"] = stations[stations["health"] == "healthy"].groupby("state").size()
+        fill["healthy"] = 0
+    by_state = by_state.fillna(fill).astype({k: int for k in fill}).sort_values("median_km")
     print("\nby state (sorted by median distance)")
     print(by_state.round(1).to_string())
     print(f"\nwrote {full.relative_to(ROOT)}, {slim.name}, {geo.name} ({n_display} display hexes), stations.parquet")

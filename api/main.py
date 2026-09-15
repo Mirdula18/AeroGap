@@ -55,7 +55,9 @@ def parse_bbox(bbox: str | None) -> tuple[float, float, float, float] | None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "hexes": len(grid), "stations": len(stations), "grid_res": GRID_RES}
+    health = stations["health"].value_counts().to_dict() if "health" in stations else None
+    return {"status": "ok", "hexes": len(grid), "stations": len(stations), "station_health": health,
+            "grid_res": GRID_RES}
 
 
 @app.get("/grid")
@@ -97,6 +99,8 @@ def get_stations(bbox: str | None = Query(None, description="optional minLon,min
     if box:
         min_lon, min_lat, max_lon, max_lat = box
         sub = sub[sub["lon"].between(min_lon, max_lon) & sub["lat"].between(min_lat, max_lat)]
-    cols = ["station_id", "station_name", "lat", "lon", "city", "state", "rows", "last_seen"]
-    records = sub[cols].assign(last_seen=sub["last_seen"].astype(str)).to_dict(orient="records")
+    cols = ["station_id", "station_name", "lat", "lon", "city", "state", "rows", "last_seen",
+            "health", "health_reason", "usable_coverage"]
+    out = sub[[c for c in cols if c in sub.columns]].assign(last_seen=sub["last_seen"].astype(str))
+    records = out.astype(object).where(out.notna(), None).to_dict(orient="records")  # NaN is not valid JSON
     return {"count": len(records), "stations": records}
