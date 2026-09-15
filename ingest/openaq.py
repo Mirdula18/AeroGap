@@ -53,11 +53,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
+from urllib.parse import unquote
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
+import pyarrow.parquet as pq
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -78,6 +80,10 @@ WORKERS = 32
 SNAP_TOLERANCE_DEG = 0.05  # ~5 km
 
 SENTINELS = {999.0, 999.9, 999.99, 9999.0, 99999.0}
+
+# Hourly surface wind above 25 m/s (~90 km/h sustained for an hour) is a
+# sensor or unit error at these stations, not weather.
+WIND_SPEED_MAX_MS = 25.0
 
 # Generous physical ceilings in the archive's native units. Above these a
 # reading is an instrument fault, not pollution. Keys: (parameter, unit).
@@ -463,19 +469,74 @@ class DropLog:
     def __init__(self):
         self.counts: Counter = Counter()
         self.by_param: dict[str, Counter] = defaultdict(Counter)
+        self.by_state: dict[str, Counter] = defaultdict(Counter)  # reason -> state -> rows
         self.raw_rows = 0
         self.kept_rows = 0
 
-    def drop(self, df: pd.DataFrame, mask: pd.Series, reason: str) -> pd.DataFrame:
+    def drop(self, df: pd.DataFrame, mask: pd.Series, reason: str, state: str | None = None) -> pd.DataFrame:
         n = int(mask.sum())
         if n:
             self.counts[reason] += n
             for param, c in df.loc[mask, "parameter"].value_counts().items():
                 self.by_param[param][reason] += int(c)
+            self.by_state[reason][state or "unknown"] += n
         return df[~mask]
 
 
-def clean_month(frames: list[pd.DataFrame], locs: pd.DataFrame, drops: DropLog) -> pd.DataFrame:
+def apply_value_rules(df: pd.DataFrame, drops: DropLog, state: str | None = None) -> pd.DataFrame:
+    """Value-level rules. Idempotent, so they can be re-applied to already-built Parquet (--refilter)."""
+    df = drops.drop(df, df["value"] < 0, "negative", state)
+    df = drops.drop(df, df["value"].isin(SENTINELS), "sentinel_999", state)
+    df = drops.drop(df, df["value"] > _caps(df), "implausible_high", state)
+    wind = (df["parameter"] == "wind_speed") & (df["unit"] == "m/s") & (df["value"] > WIND_SPEED_MAX_MS)
+    df = drops.drop(df, wind, "wind_speed_over_25ms", state)
+    return df
+
+
+def refilter_history(parameters: set[str] | None) -> DropLog:
+    """Re-apply value rules to data/history in place. Needs no raw download cache."""
+    drops = DropLog()
+    files = sorted(OUT_DIR.glob("state=*/parameter=*/month=*/*.parquet"))
+    rewritten = 0
+    for path in files:
+        keys = dict(part.split("=", 1) for part in path.parts[-4:-1])
+        state, parameter = unquote(keys["state"]), unquote(keys["parameter"])
+        if parameters and parameter not in parameters:
+            continue
+        table = pq.read_table(path, partitioning=None)
+        df = table.to_pandas()
+        drops.raw_rows += len(df)
+        drops.by_state["_rows_checked"][state] += len(df)
+        kept = apply_value_rules(df.assign(parameter=parameter), drops, state).drop(columns="parameter")
+        drops.kept_rows += len(kept)
+        if len(kept) < len(df):
+            tmp = path.with_suffix(".tmp")
+            pq.write_table(pa.Table.from_pandas(kept, schema=table.schema, preserve_index=False), tmp)
+            tmp.replace(path)
+            rewritten += 1
+    log.info("refilter: checked %d files (%s rows), rewrote %d", len(files) if not parameters else
+             sum(1 for f in files if unquote(f.parts[-3].split("=", 1)[1]) in parameters),
+             f"{drops.raw_rows:,}", rewritten)
+    return drops
+
+
+def print_state_drops(drops: DropLog, reason: str) -> None:
+    by_state = drops.by_state.get(reason, Counter())
+    checked = drops.by_state.get("_rows_checked", Counter())
+    print(f"\n{reason}: {sum(by_state.values()):,} rows removed across {len(by_state)} states")
+    if not by_state:
+        return
+    header = f"  {'state':<44}{'removed':>10}" + (f"{'checked':>14}{'share':>9}" if checked else "")
+    print(header)
+    for state, n in by_state.most_common():
+        line = f"  {state:<44}{n:>10,}"
+        if checked:
+            line += f"{checked[state]:>14,}{100 * n / max(checked[state], 1):>8.2f}%"
+        print(line)
+
+
+def clean_month(frames: list[pd.DataFrame], locs: pd.DataFrame, drops: DropLog,
+                state: str | None = None) -> pd.DataFrame:
     df = pd.concat(frames, ignore_index=True)
     drops.raw_rows += len(df)
 
@@ -486,14 +547,12 @@ def clean_month(frames: list[pd.DataFrame], locs: pd.DataFrame, drops: DropLog) 
     df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
     df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
 
-    df = drops.drop(df, df["value"].isna(), "null_value")
-    df = drops.drop(df, df["timestamp_utc"].isna(), "bad_timestamp")
-    df = drops.drop(df, df["lat"].isna() | df["lon"].isna(), "missing_coordinates")
-    df = drops.drop(df, df["value"] < 0, "negative")
-    df = drops.drop(df, df["value"].isin(SENTINELS), "sentinel_999")
-    df = drops.drop(df, df["value"] > _caps(df), "implausible_high")
+    df = drops.drop(df, df["value"].isna(), "null_value", state)
+    df = drops.drop(df, df["timestamp_utc"].isna(), "bad_timestamp", state)
+    df = drops.drop(df, df["lat"].isna() | df["lon"].isna(), "missing_coordinates", state)
+    df = apply_value_rules(df, drops, state)
     dup = df.duplicated(subset=["sensors_id", "timestamp_utc"], keep="last")
-    df = drops.drop(df, dup, "duplicate_sensor_timestamp")
+    df = drops.drop(df, dup, "duplicate_sensor_timestamp", state)
 
     meta = locs.set_index("location_id")[["state", "city"]]
     df = df.join(meta, on="location_id")
@@ -567,7 +626,7 @@ def build(snapshot_dir: Path, locs: pd.DataFrame, start: date, end: date) -> tup
                     log.warning("unreadable %s: %s", p.relative_to(ROOT), exc)
             if not frames:
                 continue
-            df = clean_month(frames, locs, drops)
+            df = clean_month(frames, locs, drops, state)
             if df.empty:
                 continue
 
@@ -624,6 +683,7 @@ def summarise(drops: DropLog, stats: Stats, stations: pd.DataFrame, args) -> dic
         "raw_rows": drops.raw_rows, "kept_rows": drops.kept_rows, "dropped_rows": total_dropped,
         "dropped_by_reason": dict(drops.counts),
         "dropped_by_parameter": {k: dict(v) for k, v in drops.by_param.items()},
+        "dropped_by_state": {k: dict(v) for k, v in drops.by_state.items()},
         "rows_per_parameter": dict(stats.rows_per_param.most_common()),
         "states_covered": int(states.size),
         "stations_per_state": states.to_dict(),
@@ -644,6 +704,8 @@ def summarise(drops: DropLog, stats: Stats, stations: pd.DataFrame, args) -> dic
         p(f"  unreadable files skipped: {stats.unreadable_files}")
     for reason, n in drops.counts.most_common():
         p(f"  dropped {reason:<28} {n:>12,}  ({pct(n):.2f}%)")
+    if drops.counts.get("wind_speed_over_25ms"):
+        print_state_drops(drops, "wind_speed_over_25ms")
     p("\nrows per parameter")
     for param, n in stats.rows_per_param.most_common():
         p(f"  {param:<16} {n:>12,}")
@@ -677,6 +739,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="re-list locations and re-probe them (picks up new stations)")
     parser.add_argument("--skip-download", action="store_true", help="only rebuild Parquet from cached files")
     parser.add_argument("--location-ids", help="comma-separated OpenAQ location ids; skips the full archive scan")
+    parser.add_argument("--refilter", nargs="?", const="all", metavar="PARAMS",
+                        help="re-apply value rules to data/history in place (no download, no raw cache); "
+                             "optionally a comma-separated parameter list, e.g. wind_speed")
     args = parser.parse_args(argv)
     only_ids = [int(x) for x in args.location_ids.split(",")] if args.location_ids else None
     args.country = args.country.upper()
@@ -687,6 +752,22 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("urllib3").setLevel(logging.ERROR)
+
+    if args.refilter:
+        params = None if args.refilter == "all" else {p.strip() for p in args.refilter.split(",")}
+        drops = refilter_history(params)
+        for reason, n in drops.counts.most_common():
+            print(f"  dropped {reason:<28} {n:>12,}")
+        print_state_drops(drops, "wind_speed_over_25ms")
+        summary_path = OUT_DIR / "_summary.json"
+        if summary_path.exists():
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary.setdefault("refilter_runs", []).append({
+                "parameters": sorted(params) if params else "all", "rows_checked": drops.raw_rows,
+                "dropped_by_reason": dict(drops.counts),
+                "dropped_by_state": {k: dict(v) for k, v in drops.by_state.items() if k != "_rows_checked"}})
+            summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+        return 0
 
     snapshot_dir = RAW_DIR / (args.snapshot or args.country)
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -707,7 +788,11 @@ def main(argv: list[str] | None = None) -> int:
     locs.drop(columns=["years"]).to_parquet(snapshot_dir / "locations.parquet", index=False)
 
     if not args.skip_download:
-        download(session, snapshot_dir, locs["location_id"].tolist(), args.start, args.end, args.workers)
+        # Always fetch whole months: build() rewrites month partitions wholesale, so a
+        # mid-month --start must not yield a partial partition once the raw cache is gone.
+        dl_start = args.start.replace(day=1)
+        dl_end = min(date.today(), (args.end.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1))
+        download(session, snapshot_dir, locs["location_id"].tolist(), dl_start, dl_end, args.workers)
 
     drops, stats, stations = build(snapshot_dir, locs, args.start, args.end)
     if drops.raw_rows == 0:
