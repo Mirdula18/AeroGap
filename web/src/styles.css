@@ -17,6 +17,7 @@ html, body, #root, .app { margin: 0; height: 100%; }
 
 .panel {
   position: absolute;
+  z-index: 2; /* above deck.gl's canvas, which otherwise paints hexes over the panel */
   top: 16px;
   left: 16px;
   width: min(340px, calc(100% - 32px));
@@ -69,6 +70,7 @@ html, body, #root, .app { margin: 0; height: 100%; }
 
 .tooltip {
   position: absolute;
+  z-index: 3;
   pointer-events: none;
   max-width: 260px;
   padding: 8px 10px;

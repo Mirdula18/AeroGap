@@ -5,7 +5,10 @@ import { H3HexagonLayer } from "@deck.gl/geo-layers";
 import { ScatterplotLayer } from "@deck.gl/layers";
 import cities from "./cities.json";
 
-const API = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
+// With an API URL the map queries it per viewport; without one it reads the static
+// snapshot in public/data (api/export_static.py), which is what the free static host serves.
+const API = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+const STATIC_BASE = `${import.meta.env.BASE_URL}data`.replace(/\/{2,}/g, "/");
 
 // Free, keyless basemap (CARTO Positron, OSM data). Light so the sequential
 // ramp reads "further from a monitor = darker".
@@ -45,14 +48,19 @@ export default function App() {
   const [stations, setStations] = useState([]);
   const [hover, setHover] = useState(null);
   const [status, setStatus] = useState("Loading…");
-  const [active, setActive] = useState("india");
+  // ?city=delhi-ncr opens straight on a region (handy for the demo video and for screenshots).
+  const initialCity = useMemo(() => {
+    const id = new URLSearchParams(window.location.search).get("city");
+    return cities.find((c) => c.id === id) || cities[0];
+  }, []);
+  const [active, setActive] = useState(initialCity.id);
 
   useEffect(() => {
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style: BASEMAP,
-      center: [cities[0].longitude, cities[0].latitude],
-      zoom: cities[0].zoom,
+      center: [initialCity.longitude, initialCity.latitude],
+      zoom: initialCity.zoom,
       minZoom: 3,
       maxZoom: 12,
       attributionControl: { compact: true },
@@ -65,22 +73,48 @@ export default function App() {
 
     let timer;
     let controller;
+    const cache = new Map();
+    const staticFile = async (name) => {
+      if (!cache.has(name)) cache.set(name, fetch(`${STATIC_BASE}/${name}`).then((r) => {
+        if (!r.ok) throw new Error(`${name} ${r.status}`);
+        return r.json();
+      }));
+      return cache.get(name);
+    };
+    // Static mode: full res-7 detail over a demo city, coarser hexes when zoomed out.
+    const pickStaticFile = (meta, center, zoom) => {
+      const city = zoom >= 7.5 && meta.cities.find(({ bbox: [w, s, e, n] }) =>
+        center.lng >= w && center.lng <= e && center.lat >= s && center.lat <= n);
+      if (city) return city.file;
+      return meta.national[zoom < 3.5 ? "4" : zoom < 6 ? "5" : "6"];
+    };
+
     const load = () => {
       clearTimeout(timer);
       timer = setTimeout(async () => {
         controller?.abort();
         controller = new AbortController();
-        const b = map.getBounds();
-        const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((v) => v.toFixed(3)).join(",");
         try {
           setStatus("Loading hexes…");
-          const res = await fetch(`${API}/grid?bbox=${bbox}`, { signal: controller.signal });
-          if (!res.ok) throw new Error(`API ${res.status}`);
-          const data = await res.json();
+          let data;
+          if (API) {
+            const b = map.getBounds();
+            const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((v) => v.toFixed(3)).join(",");
+            const res = await fetch(`${API}/grid?bbox=${bbox}`, { signal: controller.signal });
+            if (!res.ok) throw new Error(`API ${res.status}`);
+            data = await res.json();
+          } else {
+            const meta = await staticFile("meta.json");
+            data = await staticFile(pickStaticFile(meta, map.getCenter(), map.getZoom()));
+          }
           setGrid(data);
-          setStatus(`${data.count.toLocaleString()} hexes · H3 res ${data.res}`);
+          setStatus(`${data.count.toLocaleString()} hexes · H3 res ${data.res}${API ? "" : " · static snapshot"}`);
         } catch (err) {
-          if (err.name !== "AbortError") setStatus(`Could not reach the API (${err.message}). It may be waking up — retrying on the next move.`);
+          if (err.name !== "AbortError") {
+            setStatus(API
+              ? `Could not reach the API (${err.message}). It may be waking up — retrying on the next move.`
+              : `Could not load the map data (${err.message}).`);
+          }
         }
       }, 250);
     };
@@ -89,9 +123,9 @@ export default function App() {
     load();
     map.on("moveend", load);
 
-    fetch(`${API}/stations`)
+    fetch(API ? `${API}/stations` : `${STATIC_BASE}/stations.json`)
       .then((r) => r.json())
-      .then((d) => setStations(d.stations))
+      .then((d) => setStations(Array.isArray(d) ? d : d.stations))
       .catch(() => {});
 
     return () => {
@@ -112,7 +146,9 @@ export default function App() {
 
   const hexRows = useMemo(() => {
     if (!grid) return [];
-    return grid.h3.map((h, i) => ({ h3: h, d: grid.dist_km[i], s: grid.station_count[i] }));
+    // d = distance to nearest WORKING monitor (drives the shading); dn = nearest listed monitor.
+    const working = grid.dist_working_km || grid.dist_km;
+    return grid.h3.map((h, i) => ({ h3: h, d: working[i], dn: grid.dist_km[i], s: grid.station_count[i] }));
   }, [grid]);
 
   useEffect(() => {
@@ -164,8 +200,8 @@ export default function App() {
         <h1>AeroGap</h1>
         <p className="tagline">Predicting the pollution your monitors miss.</p>
         <p className="lede">
-          Each hexagon is ~5&nbsp;km across, shaded by the distance to the nearest air quality monitor. The darker
-          it is, the less anyone is measuring there.
+          Each hexagon is ~5&nbsp;km across, shaded by the distance to the nearest <em>working</em> air quality
+          monitor. Stuck or silent monitors don't count. The darker it is, the less anyone is really measuring there.
         </p>
 
         <div className="cities" role="group" aria-label="Jump to region">
@@ -177,7 +213,7 @@ export default function App() {
         </div>
 
         <div className="legend">
-          <div className="legend-title">Distance to nearest monitor (km)</div>
+          <div className="legend-title">Distance to nearest working monitor (km)</div>
           <div className="ramp">
             {BINS.map((b) => (
               <div key={b.label} className="ramp-step">
@@ -208,9 +244,12 @@ export default function App() {
         <div className="tooltip" style={{ left: hover.x + 14, top: hover.y + 14 }}>
           {hover.kind === "hex" ? (
             <>
-              <strong>{hover.d.toFixed(1)} km</strong> to nearest monitor
+              <strong>{hover.d.toFixed(1)} km</strong> to nearest working monitor
+              {Math.abs(hover.d - hover.dn) >= 0.1 && (
+                <div className="muted">{hover.dn.toFixed(1)} km to nearest listed monitor</div>
+              )}
               <div className="muted">
-                {hover.s > 0 ? `${hover.s} station${hover.s > 1 ? "s" : ""} in this hex` : "No station in this hex"}
+                {hover.s > 0 ? `${hover.s} listed station${hover.s > 1 ? "s" : ""} in this hex` : "No station in this hex"}
               </div>
             </>
           ) : (

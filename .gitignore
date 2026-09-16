@@ -10,8 +10,10 @@ api.txt
 *.pdf
 *.docx
 
-# Data (large, regenerable, may contain cached API responses)
-data/
+# Data (large, regenerable, may contain cached API responses).
+# Leading slash: only the top-level folder, so web/public/data (the static map
+# snapshot the free host serves) stays in the repo.
+/data/
 *.parquet
 *.duckdb
 *.duckdb.wal

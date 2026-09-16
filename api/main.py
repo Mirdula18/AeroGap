@@ -74,22 +74,22 @@ def get_grid(
         steps = math.ceil(math.log(len(sub) / MAX_CELLS, 7)) if len(sub) > MAX_CELLS else 0
         res = max(MIN_RES, GRID_RES - steps)
 
+    # dist_working_km: nearest HEALTHY monitor (the honest gap); dist_km: nearest listed monitor.
+    dist_cols = [c for c in ("dist_working_km", "dist_km") if c in grid.columns]
     if res == GRID_RES:
-        out = sub[["h3", "dist_km", "station_count"]]
+        out = sub[["h3", *dist_cols, "station_count"]]
     else:
         out = (sub.groupby(f"h3_r{res}")
-               .agg(dist_km=("dist_km", "mean"), station_count=("station_count", "sum"))
+               .agg(**{c: (c, "mean") for c in dist_cols}, station_count=("station_count", "sum"))
                .reset_index().rename(columns={f"h3_r{res}": "h3"}))
     if len(out) > MAX_CELLS * 7:
         raise HTTPException(413, f"{len(out)} cells; request a coarser res or smaller bbox")
 
-    return {
-        "res": res,
-        "count": len(out),
-        "h3": out["h3"].tolist(),
-        "dist_km": np.round(out["dist_km"].to_numpy(dtype=float), 1).tolist(),
-        "station_count": out["station_count"].astype(int).tolist(),
-    }
+    body = {"res": res, "count": len(out), "h3": out["h3"].tolist()}
+    for c in dist_cols:
+        body[c] = np.round(out[c].to_numpy(dtype=float), 1).tolist()
+    body["station_count"] = out["station_count"].astype(int).tolist()
+    return body
 
 
 @app.get("/stations")

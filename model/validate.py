@@ -256,10 +256,11 @@ def band_table(per_period: pd.DataFrame, categories: bool) -> pd.DataFrame:
     if categories:
         pp["cat_ok"] = _category(pp["actual"].to_numpy()) == _category(pp["predicted"].to_numpy())
     rows = []
+    # No blended all-band row: a near-band tie and a far-band win must never average into one number.
     for model in per_period["model"].unique():
         m = pp[pp.model == model]
-        for label in [b[2] for b in BANDS] + ["all"]:
-            pr = m if label == "all" else m[m.band == label]
+        for label in [b[2] for b in BANDS]:
+            pr = m[m.band == label]
             row = {"model": model, "band": label, "stations": pr["station_id"].nunique(),
                    "station_periods": len(pr), "mae": pr["abs_err"].mean(),
                    # MAE relative to the band's mean level: dense bands are also the most polluted,
@@ -270,6 +271,34 @@ def band_table(per_period: pd.DataFrame, categories: bool) -> pd.DataFrame:
             if categories:
                 row["category_agreement_pct"] = 100 * pr["cat_ok"].mean() if len(pr) else np.nan
             rows.append(row)
+    return pd.DataFrame(rows)
+
+
+BASELINE = "idw_k8"
+
+
+def improvement_vs_baseline(bands: pd.DataFrame, baseline: str = BASELINE) -> pd.DataFrame:
+    """Per-band change against inverse-distance weighting.
+
+    The target is the far bands (20-50 km, 100 km+), where satellite, fire and wind
+    features carry information distance-weighting cannot see; a tie in the 0-20 km
+    band is an acceptable, honest result. Both models are scored on the same
+    station-periods, so the comparison is paired.
+    """
+    base = bands[bands["model"] == baseline].set_index("band")
+    rows = []
+    for model in bands["model"].unique():
+        if model == baseline:
+            continue
+        m = bands[bands["model"] == model].set_index("band")
+        for _, _, label in BANDS:
+            if label not in m.index or label not in base.index or pd.isna(base.at[label, "mae"]):
+                continue
+            b_mae, m_mae = base.at[label, "mae"], m.at[label, "mae"]
+            rows.append({"model": model, "band": label, "station_periods": int(m.at[label, "station_periods"]),
+                         "baseline_mae": b_mae, "model_mae": m_mae,
+                         "mae_improvement": b_mae - m_mae, "mae_improvement_pct": 100 * (b_mae - m_mae) / b_mae,
+                         "baseline_nmae_pct": base.at[label, "nmae_pct"], "model_nmae_pct": m.at[label, "nmae_pct"]})
     return pd.DataFrame(rows)
 
 
@@ -318,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     categories = args.parameter == "pm25" and args.freq == "D"
     per_station, per_period = leave_station_out(corpus, predictors, targets, categories)
     bands = band_table(per_period, categories)
+    versus = improvement_vs_baseline(bands)
 
     out = OUT_DIR / (f"{args.parameter}_{args.freq}" + ("_only" if args.only else ""))
     out.mkdir(parents=True, exist_ok=True)
@@ -335,6 +365,10 @@ def main(argv: list[str] | None = None) -> int:
           f"hex res {args.res}  (stations sharing the target hex are hidden too)")
     print("=" * 96)
     print(to_markdown(bands.round(2)))
+    if len(versus):
+        versus.to_csv(out / f"bands_vs_{BASELINE}.csv", index=False)
+        print(f"\nper-band improvement over {BASELINE} (positive = better; never blended across bands)")
+        print(to_markdown(versus.round(2)))
 
     if args.only:
         meta = corpus.stations
