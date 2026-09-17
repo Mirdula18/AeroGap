@@ -1,0 +1,172 @@
+[
+  {
+    "id": "delhi-station-smog",
+    "file": "web/public/data/photos/delhi-station-smog.jpg",
+    "web_path": "photos/delhi-station-smog.jpg",
+    "city": "New Delhi",
+    "lat": 28.6139,
+    "lon": 77.209,
+    "captured": "2017-12-31 09:20:17",
+    "reviewer_label": "severe",
+    "credit": {
+      "title": "Low visibility due to Smog at New Delhi Railway station 31st Dec 2017 after 9AM DSCN8829 1.jpg",
+      "artist": "Sumita Roy Dutta",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Low_visibility_due_to_Smog_at_New_Delhi_Railway_station_31st_Dec_2017_after_9AM_DSCN8829_1.jpg"
+    }
+  },
+  {
+    "id": "delhi-road-smog",
+    "file": "web/public/data/photos/delhi-road-smog.jpg",
+    "web_path": "photos/delhi-road-smog.jpg",
+    "city": "New Delhi",
+    "lat": 28.6139,
+    "lon": 77.209,
+    "captured": "2017-12-31 09:09:24",
+    "reviewer_label": "severe",
+    "credit": {
+      "title": "Low visibility due to Smog in entry of Chelmsford Road New Delhi 31st Dec 2017 9AM DSCN8819 1.jpg",
+      "artist": "Sumita Roy Dutta",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Low_visibility_due_to_Smog_in_entry_of_Chelmsford_Road_New_Delhi_31st_Dec_2017_9AM_DSCN8819_1.jpg"
+    }
+  },
+  {
+    "id": "mumbai-brown-haze",
+    "file": "web/public/data/photos/mumbai-brown-haze.jpg",
+    "web_path": "photos/mumbai-brown-haze.jpg",
+    "city": "Mumbai",
+    "lat": 19.076,
+    "lon": 72.8777,
+    "captured": "2013-03-02 08:44",
+    "reviewer_label": "severe",
+    "credit": {
+      "title": "Mumbai Haze (8569550912).jpg",
+      "artist": "Andrew Moore from Johannesburg, South Africa",
+      "license": "CC BY-SA 2.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/2.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Mumbai_Haze_(8569550912).jpg"
+    }
+  },
+  {
+    "id": "delhi-india-gate-haze",
+    "file": "web/public/data/photos/delhi-india-gate-haze.jpg",
+    "web_path": "photos/delhi-india-gate-haze.jpg",
+    "city": "New Delhi",
+    "lat": 28.6129,
+    "lon": 77.2295,
+    "captured": "2012-11-13 15:39:44",
+    "reviewer_label": "hazy",
+    "credit": {
+      "title": "The INDIA GATE.JPG",
+      "artist": "Annie Thomas",
+      "license": "CC BY-SA 3.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:The_INDIA_GATE.JPG"
+    }
+  },
+  {
+    "id": "kolkata-smoggy-skyline",
+    "file": "web/public/data/photos/kolkata-smoggy-skyline.jpg",
+    "web_path": "photos/kolkata-smoggy-skyline.jpg",
+    "city": "Kolkata",
+    "lat": 22.5726,
+    "lon": 88.3639,
+    "captured": "2016-06-14 09:19:38",
+    "reviewer_label": "hazy",
+    "credit": {
+      "title": "Smoggy Skyline - Kolkata 2016-06-14 4138.JPG",
+      "artist": "Biswarup Ganguly",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Smoggy_Skyline_-_Kolkata_2016-06-14_4138.JPG"
+    }
+  },
+  {
+    "id": "jaipur-hazy-horizon",
+    "file": "web/public/data/photos/jaipur-hazy-horizon.jpg",
+    "web_path": "photos/jaipur-hazy-horizon.jpg",
+    "city": "Jaipur",
+    "lat": 26.9124,
+    "lon": 75.7873,
+    "captured": "2006-02-21",
+    "reviewer_label": "hazy",
+    "credit": {
+      "title": "JaipurSkyline.jpg",
+      "artist": "L. Piepiora",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:JaipurSkyline.jpg"
+    }
+  },
+  {
+    "id": "ladakh-blue-sky",
+    "file": "web/public/data/photos/ladakh-blue-sky.jpg",
+    "web_path": "photos/ladakh-blue-sky.jpg",
+    "city": "Leh",
+    "lat": 34.1526,
+    "lon": 77.5771,
+    "captured": "2006-08-24 12:07",
+    "reviewer_label": "clear",
+    "credit": {
+      "title": "Ladakh (2759259934).jpg",
+      "artist": "Koshy Koshy from Faridabad, Haryana, India",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Ladakh_(2759259934).jpg"
+    }
+  },
+  {
+    "id": "munnar-blue-sky",
+    "file": "web/public/data/photos/munnar-blue-sky.jpg",
+    "web_path": "photos/munnar-blue-sky.jpg",
+    "city": "Munnar",
+    "lat": 10.0889,
+    "lon": 77.0595,
+    "captured": "2023-02-25 17:17:13",
+    "reviewer_label": "clear",
+    "credit": {
+      "title": "Sunset view over tea plantations and mountain ranges in Munnar.jpg",
+      "artist": "LiteraryDP",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Sunset_view_over_tea_plantations_and_mountain_ranges_in_Munnar.jpg"
+    }
+  },
+  {
+    "id": "coimbatore-panorama",
+    "file": "web/public/data/photos/coimbatore-panorama.jpg",
+    "web_path": "photos/coimbatore-panorama.jpg",
+    "city": "Coimbatore",
+    "lat": 11.0168,
+    "lon": 76.9558,
+    "captured": "2025-06-22",
+    "reviewer_label": "clear",
+    "credit": {
+      "title": "Panoramic View of Coimbatore from Atop Marudhamalai Temple.jpg",
+      "artist": "Vibrantv",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Panoramic_View_of_Coimbatore_from_Atop_Marudhamalai_Temple.jpg"
+    }
+  },
+  {
+    "id": "satellite-image-north-india",
+    "file": "web/public/data/photos/satellite-image-north-india.jpg",
+    "web_path": "photos/satellite-image-north-india.jpg",
+    "city": "New Delhi",
+    "lat": 28.6139,
+    "lon": 77.209,
+    "captured": "14 December 2018 (upload date)",
+    "reviewer_label": "not_sky",
+    "credit": {
+      "title": "Air Pollution Chokes Northern India (NESDIS 2018-12-14).jpg",
+      "artist": "NOAA",
+      "license": "Public domain",
+      "license_url": "",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Air_Pollution_Chokes_Northern_India_(NESDIS_2018-12-14).jpg"
+    }
+  }
+]

@@ -47,6 +47,10 @@ DEFAULT_MODEL = "gemini-3.6-flash"  # 2.0/2.5 are retired for new keys (404 with
 RETRY_STATUS = {429, 500, 502, 503, 504}
 MAX_ATTEMPTS = 5
 TIMEOUT = (20, 180)
+# Free tier is 5 requests/minute per project per model: space live requests so a batch never trips it.
+MIN_INTERVAL_S = float(os.environ.get("AEROGAP_GEMINI_MIN_INTERVAL_S", "12.5"))
+_COUNTERS = {"live_requests": 0, "live_successes": 0, "cache_hits": 0}
+_last_request = 0.0
 
 log = logging.getLogger("utils.llm_cache")
 
@@ -158,17 +162,32 @@ def gemini(parts: list[dict], *, model: str = DEFAULT_MODEL, prompt_version: str
 
     if use_cache and path.exists():
         record = json.loads(path.read_text(encoding="utf-8"))
+        _COUNTERS["cache_hits"] += 1
         return GeminiResponse(record["response"], True, key, path, record.get("latency_s", 0.0))
     if offline:
         raise OfflineCacheMiss(f"offline mode: {key[:12]}… not cached ({model}, prompt_version={prompt_version})")
 
+    global _last_request
     api_key = _load_key()
     started = time.time()
     last_error = None
     for attempt in range(1, max_attempts + 1):
-        resp = requests.post(f"{API_BASE}/{endpoint}", params={"key": api_key}, json=body, timeout=TIMEOUT)
+        wait = MIN_INTERVAL_S - (time.monotonic() - _last_request)
+        if wait > 0:
+            time.sleep(wait)
+        _last_request = time.monotonic()
+        _COUNTERS["live_requests"] += 1
+        try:
+            resp = requests.post(f"{API_BASE}/{endpoint}", params={"key": api_key}, json=body, timeout=TIMEOUT)
+        except requests.RequestException as exc:  # timeouts and dropped connections are transient too
+            last_error = f"{type(exc).__name__}: {str(exc).replace(api_key, '<KEY>')[:160]}"
+            if attempt == max_attempts:
+                raise RuntimeError(f"Gemini call failed, {last_error}") from None
+            log.warning("%s; retrying (attempt %d/%d)", last_error, attempt, max_attempts)
+            continue
         if resp.status_code == 200:
             payload = resp.json()
+            _COUNTERS["live_successes"] += 1
             break
         payload = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
         last_error = f"HTTP {resp.status_code}: {str(payload.get('error', {}).get('message', ''))[:200]}"
@@ -187,6 +206,11 @@ def gemini(parts: list[dict], *, model: str = DEFAULT_MODEL, prompt_version: str
     tmp.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
     return GeminiResponse(payload, False, key, path, latency)
+
+
+def usage() -> dict:
+    """Calls made by this process: every HTTP request to Gemini (retries included), successes, cache replays."""
+    return dict(_COUNTERS)
 
 
 def add_cache_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
