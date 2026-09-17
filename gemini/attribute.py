@@ -130,24 +130,43 @@ def clean(v, digits: int = 3):
     return None if not np.isfinite(f) else round(f, digits)
 
 
-def select_hexes(df: pd.DataFrame) -> list[tuple[str, int]]:
-    """(role, row index) per the fixed selection rule."""
-    picks, used_regions = [], set()
+MIN_SEPARATION_KM = 300.0
+
+
+def select_hexes(df: pd.DataFrame, min_separation_km: float = MIN_SEPARATION_KM) -> list[tuple[str, int]]:
+    """(role, row index) per the fixed selection rule.
+
+    Every pick is at least min_separation_km from every other, so two picks are never the
+    same place seen twice. A dark zone needs no WORKING monitor and no REPORTING monitor
+    within 50 km: otherwise the estimate is anchored on a nearby unhealthy monitor, which is a
+    data-quality story, not a dark zone.
+    """
+    picks: list[tuple[str, int]] = []
+    points: list[tuple[float, float]] = []
+
+    def far_enough(i: int) -> bool:
+        lat, lon = df.at[i, "lat"], df.at[i, "lon"]
+        return all(haversine_km(lat, lon, plat, plon) >= min_separation_km for plat, plon in points)
+
+    def add(role: str, i: int):
+        picks.append((role, int(i)))
+        points.append((df.at[i, "lat"], df.at[i, "lon"]))
+
     for role, (lat, lon) in CITY_CENTRES.items():
         idx = df.index[df["h3"] == h3.latlng_to_cell(lat, lon, 7)]
         if len(idx):
-            picks.append((role, int(idx[0])))
-            used_regions.add(df.at[idx[0], "h3_r4"])
+            add(role, idx[0])
 
     def top(mask: pd.Series, n: int, role: str):
+        taken = 0
         for i in df[mask].sort_values("pm25", ascending=False).index:
-            if len([p for p in picks if p[0] == role]) == n:
+            if taken == n:
                 return
-            if df.at[i, "h3_r4"] not in used_regions:
-                picks.append((role, int(i)))
-                used_regions.add(df.at[i, "h3_r4"])
+            if far_enough(i):
+                add(role, i)
+                taken += 1
 
-    top(df["dist_working_km"] > 50, 2, "dark_zone")
+    top((df["dist_working_km"] > 50) & (df["dist_nearest_km"] > 50), 2, "dark_zone")
     top(df["confidence"] == 2, 1, "low_confidence")
     return picks
 
@@ -162,10 +181,12 @@ def build_signals(df: pd.DataFrame, i: int, day: date, stations: pd.DataFrame, g
     nearest = near.nsmallest(3, "distance_km")
     meta = grid_meta.loc[r["h3"]] if r["h3"] in grid_meta.index else None
     level = int(r["confidence"])
+    district = None if meta is None else meta["district"]
+    if not district or str(district).strip().upper() == "DATA NOT AVAILABLE":  # geoBoundaries placeholder
+        district = "district not named in boundary data"
     return {
         "date": day.isoformat(),
-        "location": {"h3": r["h3"], "district": None if meta is None else meta["district"],
-                     "state": None if meta is None else meta["state"]},
+        "location": {"h3": r["h3"], "district": district, "state": None if meta is None else meta["state"]},
         "predicted_pm25_ug_m3": clean(r["pm25"], 1),
         "predicted_category": category(float(r["pm25"])),
         "model_confidence": CONFIDENCE[level],
