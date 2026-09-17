@@ -47,7 +47,24 @@ html, body, #root, .app { margin: 0; height: 100%; }
 .cities button:hover { background: rgba(11, 11, 11, 0.05); }
 .cities button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+.toggle { display: flex; gap: 0; margin: 0 0 12px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.toggle button {
+  flex: 1;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.toggle button + button { border-left: 1px solid var(--border); }
+.toggle button.active { background: var(--text-primary); color: var(--surface-1); }
+.dates { margin-top: -6px; }
+
 .legend-title { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+.ramp.ramp-6 { grid-template-columns: repeat(6, 1fr); }
+.ramp.ramp-3 { grid-template-columns: repeat(3, 1fr); }
 .ramp { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
 .ramp-step { display: flex; flex-direction: column; gap: 3px; }
 .swatch { height: 12px; border-radius: 2px; }

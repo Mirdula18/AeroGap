@@ -64,3 +64,37 @@ The 0–20 km band is not part of the rule: a tie with IDW there is an acceptabl
 
 *(Appended by `python -m model.decide` after the single evaluation. Nothing above this line
 changes after it runs.)*
+
+### Evaluated 2026-09-17T07:47:27+00:00
+
+Specification committed first: `142d1eb 2026-09-17 13:12:20 +0530`. Single run of `python -m model.decide`.
+
+Note: The first invocation crashed on a formatting error in this Result block after computing, before any result was displayed or appended. Re-run after the fix; the bootstrap is seeded, so the numbers are the ones that run produced.
+
+
+Combined model vs IDW (station bootstrap, 2,000 draws, 95% CI):
+
+| Band | MAE µg/m³ [95% CI] | Improvement over IDW [95% CI] |
+|---|---|---|
+| 0-20 km | 16.8 [15.8, 17.8] | -3.8% [-5.8, -1.7] |
+| 20-50 km (target) | 18.6 [16.4, 21.0] | +12.1% [+6.8, +17.0] |
+| 50-100 km | 15.0 [13.4, 17.0] | +7.3% [+1.5, +12.6] |
+| 100 km+ (target) | 21.4 [16.5, 28.3] | +6.9% [-7.7, +21.4] |
+
+Rule checks (lower bound of improvement over IDW > 0):
+- 20-50 km: PASS (lower bound +6.8%)
+- 100 km+: FAIL (lower bound -7.7%)
+
+**The combined model does not win.** 20-50 km: lower bound +6.8%; 100 km+: lower bound -7.7%. As declared, variant 3 (residual on IDW, no lat/lon) is promoted to `model/model.pkl` instead.
+
+SIDCO Kurichi, hidden (7-day block bootstrap over its own 250 days; not part of the rule):
+
+| Model | MAE [95% CI] | r [95% CI] | Right AQI category [95% CI] | vs IDW [95% CI] |
+|---|---|---|---|---|
+| IDW, 8 nearest (baseline) | 10.8 [9.0, 13.1] | 0.53 [0.39, 0.67] | 66% [57, 73] |  |
+| 1. Level, median loss | 11.9 [9.7, 14.2] | 0.60 [0.45, 0.73] | 63% [54, 71] | -9.7% [-22.8, +4.2] |
+| 2. Residual on IDW | 11.5 [9.3, 14.0] | 0.56 [0.39, 0.69] | 64% [56, 72] | -6.6% [-19.7, +6.8] |
+| 3. Residual on IDW, no lat/lon | 9.6 [8.1, 11.6] | 0.60 [0.45, 0.72] | 66% [58, 73] | +10.7% [+0.5, +19.1] |
+| Combined (pre-registered) | 9.6 [8.1, 11.6] | 0.60 [0.45, 0.72] | 66% [58, 73] | +10.7% [+0.5, +19.1] |
+
+Full tables: `docs/model-bands-ci.md`, `docs/sidco-kurichi-ci.csv`. Modelling is now frozen.

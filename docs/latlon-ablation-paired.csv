@@ -1,0 +1,5 @@
+band,stations,station_days,improvement_pct,lo,hi,model,reference
+0-20 km,357,95684,2.357,-0.007,4.736,m3_residual_l2_nogeo,m2_residual_l2
+20-50 km,142,18474,2.7,-0.334,5.761,m3_residual_l2_nogeo,m2_residual_l2
+50-100 km,200,23396,3.011,0.293,5.826,m3_residual_l2_nogeo,m2_residual_l2
+100 km+,130,5033,-7.136,-14.398,-0.934,m3_residual_l2_nogeo,m2_residual_l2

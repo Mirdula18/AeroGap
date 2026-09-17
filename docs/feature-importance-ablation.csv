@@ -1,0 +1,25 @@
+feature,group,m2_residual_l2,m3_residual_l2_nogeo
+dist_nearest_km,Neighbour stations,13.09,25.26
+neighbour_nearest,Neighbour stations,10.6,12.95
+neighbour_spread,Neighbour stations,6.49,10.69
+neighbour_idw,Neighbour stations,9.48,9.72
+no2_trop,Satellite columns,2.16,4.98
+doy_cos,"Wind, fire, season",4.4,4.72
+wind_speed,"Wind, fire, season",1.57,3.83
+doy_sin,"Wind, fire, season",3.43,3.55
+wind_dir_cos,"Wind, fire, season",1.55,3.48
+aai,Satellite columns,1.71,3.21
+co,Satellite columns,1.69,2.78
+wind_dir_sin,"Wind, fire, season",1.43,2.71
+n_reporting,Neighbour stations,2.07,2.59
+upwind_fires_150km,"Wind, fire, season",1.18,1.91
+so2,Satellite columns,1.05,1.83
+frp_150km,"Wind, fire, season",0.7,1.26
+upwind_frp_150km,"Wind, fire, season",0.7,1.23
+month,"Wind, fire, season",1.86,1.16
+fires_150km,"Wind, fire, season",0.61,0.98
+fire_count,"Wind, fire, season",0.14,0.61
+frp_sum,"Wind, fire, season",0.11,0.29
+weekday,"Wind, fire, season",0.17,0.27
+lat,Location (lat/lon),19.87,
+lon,Location (lat/lon),13.94,

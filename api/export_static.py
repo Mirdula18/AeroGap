@@ -90,7 +90,11 @@ def main(argv: list[str] | None = None) -> int:
     size = write_json(OUT_DIR / "stations.json", st.astype(object).where(st.notna(), None).to_dict(orient="records"))
     print(f"  {'stations.json':<16} {size/1e6:6.2f} MB  ({len(st):,} stations)")
 
-    write_json(OUT_DIR / "meta.json", {
+    meta_path = OUT_DIR / "meta.json"
+    previous = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    write_json(meta_path, {
+        # model/predict.py owns this block; regenerating the grid snapshot must not drop it
+        **({"predictions": previous["predictions"]} if "predictions" in previous else {}),
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "grid_res": args.res, "hexes": len(grid), "stations": len(stations),
         "station_health": stations["health"].value_counts().to_dict() if "health" in stations else None,
