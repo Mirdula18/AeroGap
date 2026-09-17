@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
-import { ScatterplotLayer } from "@deck.gl/layers";
+import { IconLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { cellToLatLng, cellToParent, getResolution } from "h3-js";
 import cities from "./cities.json";
+import { ExplanationPanel, PhotoPanel } from "./Detail.jsx";
 
 // With an API URL the map queries it per viewport; without one it reads the static
-// snapshot in public/data (api/export_static.py + model/predict.py), which is what the free static host serves.
+// snapshot in public/data (api/export_static.py, model/predict.py, gemini/*), which the free static host serves.
 const API = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 const STATIC_BASE = `${import.meta.env.BASE_URL}data`.replace(/\/{2,}/g, "/");
 
@@ -33,8 +35,8 @@ const CATEGORIES = [
   { max: 250, label: "Very poor", range: "121–250", color: "#d9432b" },
   { max: Infinity, label: "Severe", range: "250+", color: "#8c1d2c" },
 ];
-// Low confidence blends toward a neutral grey, never toward white: a faded "Severe" must not read as clean air.
 // Three levels, from validation on hidden monitors, by distance to the nearest reporting monitor.
+// Low confidence blends toward a neutral grey, never toward white: a faded "Severe" must not read as clean air.
 const CONFIDENCE_MIX = [0, 0.4, 0.75];
 const CONFIDENCE_LABEL = ["High", "Medium", "Low"];
 const CONFIDENCE_RANGE = ["within 20 km", "20–100 km", "beyond 100 km"];
@@ -51,14 +53,43 @@ const HEALTH = {
 const HEALTH_ORDER = ["healthy", "intermittent", "stuck", "dead"];
 const healthOf = (d) => (HEALTH[d.health] ? d.health : "healthy");
 
+// A camera pin for virtual-sensor photos (inline SVG, no external asset).
+const CAMERA_ICON = {
+  url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">' +
+      '<circle cx="24" cy="24" r="21" fill="#0b0b0b" stroke="#fcfcfb" stroke-width="3"/>' +
+      '<rect x="12" y="17" width="24" height="16" rx="3" fill="#fcfcfb"/><rect x="19" y="13" width="10" height="5" rx="1.5" fill="#fcfcfb"/>' +
+      '<circle cx="24" cy="25" r="5" fill="#0b0b0b"/></svg>'
+  )}`,
+  width: 48,
+  height: 48,
+  anchorY: 24,
+};
+
 const hexToRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 const BIN_RGB = BINS.map((b) => hexToRgb(b.color));
 const CAT_RGB = CATEGORIES.map((c) => hexToRgb(c.color));
 const gapColor = (km) => BIN_RGB[BINS.findIndex((b) => km < b.max)];
 const categoryOf = (pm) => CATEGORIES.findIndex((c) => pm <= c.max);
 const mix = (rgb, t) => rgb.map((v, i) => Math.round(v * (1 - t) + NEUTRAL[i] * t));
-const predColor = (pm, confidence) => mix(CAT_RGB[categoryOf(pm)], CONFIDENCE_MIX[confidence] ?? 0.78);
+const predColor = (pm, confidence) => mix(CAT_RGB[categoryOf(pm)], CONFIDENCE_MIX[confidence] ?? 0.75);
 const rgbCss = (rgb) => `rgb(${rgb.join(",")})`;
+
+// Same inverse-variance blend as gemini/photo_sensor.fuse: one photo nudges, it does not override.
+function fusePhoto(prediction, obs) {
+  if (!prediction || obs.status !== "ok" || !(obs.effective_confidence > 0)) return null;
+  const sigmaPred = Math.max(prediction.u, 1);
+  const sigmaObs = (obs.pm25_high - obs.pm25_low) / 2 / Math.max(obs.effective_confidence, 0.05);
+  const wObs = 1 / sigmaObs ** 2;
+  const wPred = 1 / sigmaPred ** 2;
+  const weight = wObs / (wObs + wPred);
+  return { fused: weight * obs.pm25_mid + (1 - weight) * prediction.pm, weight };
+}
+
+async function sha256Hex(file) {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 export default function App() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -71,11 +102,16 @@ export default function App() {
   const [stations, setStations] = useState([]);
   const [hover, setHover] = useState(null);
   const [status, setStatus] = useState("Loading…");
-  // ?city=delhi-ncr&view=gap&date=2025-11-12 open straight on a state (for the demo video and screenshots).
+  // ?city=delhi-ncr&view=gap&date=2025-11-22 open straight on a state (for the demo video and screenshots).
   const initialCity = useMemo(() => cities.find((c) => c.id === params.get("city")) || cities[0], [params]);
   const [active, setActive] = useState(initialCity.id);
   const [view, setView] = useState(params.get("view") === "gap" || API ? "gap" : "predicted");
   const [date, setDate] = useState(params.get("date"));
+  const [explanations, setExplanations] = useState(null);
+  const [sensors, setSensors] = useState(null);
+  const [photos, setPhotos] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [uploadMsg, setUploadMsg] = useState("");
   const viewRef = useRef(view);
   const dateRef = useRef(date);
   viewRef.current = view;
@@ -139,6 +175,7 @@ export default function App() {
               const entry = m.predictions.dates.find((d) => d.date === dateRef.current) || m.predictions.dates[0];
               data = await staticFile(city ? entry.cities[city.id] : entry.national[zoom < 3.5 ? "4" : "5"]);
               kind = "predicted";
+              staticFile(`explanations_${entry.date}.json`).then(setExplanations).catch(() => setExplanations(null));
             } else {
               data = await staticFile(city ? city.file : m.national[zoom < 3.5 ? "4" : zoom < 6 ? "5" : "6"]);
             }
@@ -165,6 +202,9 @@ export default function App() {
       .then((r) => r.json())
       .then((d) => setStations(Array.isArray(d) ? d : d.stations))
       .catch(() => {});
+    if (!API) {
+      fetch(`${STATIC_BASE}/virtual_sensors.json`).then((r) => r.json()).then(setSensors).catch(() => {});
+    }
 
     return () => {
       clearTimeout(timer);
@@ -197,6 +237,26 @@ export default function App() {
     return grid.h3.map((h, i) => ({ kind: "gap", h3: h, d: working[i], dn: grid.dist_km[i], s: grid.station_count[i] }));
   }, [grid]);
 
+  const explained = useMemo(
+    () => (showPredicted && explanations && activeDate && explanations.date === activeDate.date
+      ? Object.entries(explanations.hexes).map(([h3, e]) => ({ h3, ...e }))
+      : []),
+    [explanations, showPredicted, activeDate]
+  );
+
+  // A click at any loaded resolution (7 in a city, 5 or 4 nationally) resolves to the explanation inside it.
+  const explanationFor = useCallback(
+    (cell) => explained.find((e) => e.h3 === cell || e.h3_r5 === cell || e.h3_r4 === cell) || null,
+    [explained]
+  );
+
+  // The prediction for a photo's hex at whatever resolution is currently loaded.
+  const predictionAt = useCallback((cell) => {
+    if (!grid || grid.kind !== "predicted") return null;
+    const target = getResolution(cell) > grid.res ? cellToParent(cell, grid.res) : cell;
+    return hexRows.find((r) => r.h3 === target) || null;
+  }, [grid, hexRows]);
+
   useEffect(() => {
     if (!overlayRef.current) return;
     overlayRef.current.setProps({
@@ -212,6 +272,10 @@ export default function App() {
           highPrecision: "auto",
           pickable: true,
           onHover: (info) => setHover(info.object ? { x: info.x, y: info.y, ...info.object } : null),
+          onClick: (info) => {
+            if (!info.object || info.object.kind !== "predicted") return;
+            setSelected({ kind: "hex", entry: explanationFor(info.object.h3), fallback: info.object });
+          },
           updateTriggers: { getFillColor: [grid] },
         }),
         new ScatterplotLayer({
@@ -229,14 +293,87 @@ export default function App() {
           pickable: true,
           onHover: (info) => setHover(info.object ? { kind: "station", x: info.x, y: info.y, ...info.object } : null),
         }),
+        new ScatterplotLayer({
+          id: "explained",
+          data: explained,
+          getPosition: (d) => [d.lon, d.lat],
+          getFillColor: [252, 252, 251, 0],
+          getLineColor: [252, 252, 251, 255],
+          stroked: true,
+          filled: true,
+          lineWidthUnits: "pixels",
+          getLineWidth: 3,
+          radiusUnits: "pixels",
+          getRadius: 11,
+          pickable: true,
+          onHover: (info) => setHover(info.object ? { kind: "explained", x: info.x, y: info.y, ...info.object } : null),
+          onClick: (info) => info.object && setSelected({ kind: "hex", entry: info.object, fallback: null }),
+        }),
+        new IconLayer({
+          id: "photos",
+          data: photos,
+          getPosition: (d) => { const [lat, lng] = cellToLatLng(d.h3); return [lng, lat]; },
+          getIcon: () => CAMERA_ICON,
+          getSize: 30,
+          sizeUnits: "pixels",
+          pickable: true,
+          onClick: (info) => info.object && setSelected({ kind: "photo", obs: info.object }),
+        }),
       ],
     });
-  }, [hexRows, stationsByHealth, grid]);
+  }, [hexRows, stationsByHealth, grid, explained, photos, explanationFor]);
 
   const flyTo = (city) => {
     setActive(city.id);
     mapRef.current?.flyTo({ center: [city.longitude, city.latitude], zoom: city.zoom, duration: 1600 });
   };
+
+  const applyPhoto = (obs) => {
+    setPhotos((prev) => (prev.some((p) => p.id === obs.id) ? prev : [...prev, obs]));
+    setSelected({ kind: "photo", obs });
+    setUploadMsg("");
+    const [lat, lng] = cellToLatLng(obs.h3);
+    mapRef.current?.flyTo({ center: [lng, lat], zoom: 8.2, duration: 1600 });
+  };
+
+  const onUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !sensors) return;
+    const hash = await sha256Hex(file);
+    const match = sensors.observations.find((o) => o.sha256 === hash);
+    if (match) {
+      applyPhoto(match);
+    } else {
+      setUploadMsg("This photo isn't in the demo cache. Live analysis needs the Gemini backend, which this static demo "
+        + "doesn't run. Try one of the demo photos above.");
+    }
+  };
+
+  // Deep links for the demo video and screenshots: ?explain=<h3 cell> opens that hexagon's analysis,
+  // ?photo=<id> applies a demo photo. Each fires once, when its data has loaded.
+  const deepLinked = useRef({ explain: false, photo: false });
+  useEffect(() => {
+    const cell = params.get("explain");
+    if (!cell || deepLinked.current.explain || !explained.length) return;
+    const entry = explanationFor(cell);
+    if (entry) {
+      deepLinked.current.explain = true;
+      setSelected({ kind: "hex", entry, fallback: null });
+    }
+  }, [explained, explanationFor, params]);
+  useEffect(() => {
+    const id = params.get("photo");
+    if (!id || deepLinked.current.photo || !sensors) return;
+    const obs = sensors.observations.find((o) => o.id === id);
+    if (obs) {
+      deepLinked.current.photo = true;
+      applyPhoto(obs);
+    }
+  }, [sensors, params]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selectedPrediction = selected?.kind === "photo" ? predictionAt(selected.obs.h3) : null;
+  const selectedFusion = selected?.kind === "photo" ? fusePhoto(selectedPrediction, selected.obs) : null;
 
   return (
     <div className="app">
@@ -256,7 +393,8 @@ export default function App() {
         <p className="lede">
           {showPredicted ? (
             <>Predicted daily PM2.5 for every ~5&nbsp;km hexagon, from satellite NO₂, aerosol and CO, wind, fires and
-              the monitors that reported that day. Colour fades to grey where the model is less sure.</>
+              the monitors that reported that day. Colour fades to grey where the model is less sure. Click a ringed
+              hexagon for Gemini's source analysis and a drafted alert.</>
           ) : (
             <>Each hexagon is ~5&nbsp;km across, shaded by the distance to the nearest <em>working</em> air quality
               monitor. Stuck or silent monitors don't count. The darker it is, the less anyone is really measuring there.</>
@@ -304,6 +442,11 @@ export default function App() {
                   </div>
                 ))}
               </div>
+              <div className="legend-station legend-monitors">
+                <span className="marker marker-explained" />
+                <span className="legend-label">Gemini source analysis and alert: click</span>
+                <span className="legend-count">{explained.length}</span>
+              </div>
             </>
           ) : (
             <>
@@ -328,6 +471,26 @@ export default function App() {
           ))}
         </div>
 
+        {sensors && (
+          <div className="sensor">
+            <div className="legend-title legend-monitors">
+              Virtual sensor: citizen sky photos <span className="gemini">Gemini</span>
+            </div>
+            <div className="thumbs">
+              {sensors.observations.map((o) => (
+                <button key={o.id} className="thumb" onClick={() => applyPhoto(o)} title={`${o.city}: ${o.reviewer_label}`}>
+                  <img src={`${STATIC_BASE}/${o.photo}`} alt={`Sky photo, ${o.city}`} loading="lazy" />
+                </button>
+              ))}
+            </div>
+            <label className="upload">
+              Upload a sky photo
+              <input type="file" accept="image/jpeg,image/png" onChange={onUpload} />
+            </label>
+            {uploadMsg && <p className="status">{uploadMsg}</p>}
+          </div>
+        )}
+
         <p className="status">{status}</p>
         <p className="footnote">
           Stations: OpenAQ (CPCB/state networks, low-cost sensors), last 12 months. A monitor stuck on a placeholder
@@ -336,6 +499,14 @@ export default function App() {
             + "typical error is about ±31% within 20 km of a reporting monitor, ±38% at 20–100 km and ±59% beyond."}
         </p>
       </aside>
+
+      {selected?.kind === "hex" && (
+        <ExplanationPanel entry={selected.entry} fallback={selected.fallback} onClose={() => setSelected(null)} />
+      )}
+      {selected?.kind === "photo" && (
+        <PhotoPanel obs={selected.obs} prediction={selectedPrediction} fusion={selectedFusion}
+          photoUrl={`${STATIC_BASE}/${selected.obs.photo}`} onClose={() => setSelected(null)} />
+      )}
 
       {hover && (
         <div className="tooltip" style={{ left: hover.x + 14, top: hover.y + 14 }}>
@@ -346,6 +517,11 @@ export default function App() {
                 ±{Math.round(hover.u)} µg/m³ typical error · {CONFIDENCE_LABEL[hover.c]} confidence
               </div>
               <div className="muted">Nearest reporting monitor {hover.dist.toFixed(0)} km away</div>
+            </>
+          )}
+          {hover.kind === "explained" && (
+            <>
+              <strong>{hover.signals.location.district}</strong>: click for Gemini's source analysis
             </>
           )}
           {hover.kind === "gap" && (

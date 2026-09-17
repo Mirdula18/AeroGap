@@ -60,7 +60,26 @@ retryDelay:  6s
 
 - **5 requests per minute, per project per model** on the free tier. 6 calls landed in 12 s
   (sliding window) before the 7th was refused; the window reopened within ~10 s.
-- **No daily cap was hit** in ~25 calls, so RPD and TPM exist but were not observed.
+- **20 requests per day, per project per model** (observed 2026-09-17, after the note above said
+  no daily cap had been seen):
+
+  ```
+  quotaId:    GenerateRequestsPerDayPerProjectPerModel-FreeTier
+  quotaValue: 20
+  ```
+
+  The wrapper's retries cannot outwait it: the daily window resets at midnight Pacific
+  (~12:30 IST), so a 429 on the daily quota must stop a batch, not retry.
+
+**Consequences for the build:**
+
+- One call per hex does not fit a day's budget. Source attribution and alerts are **batched: one
+  call per date for all demo hexes** (6 calls for 3 dates), each hex analysed independently inside
+  the batch and matched back by `hex_id`, with missing or extra ids flagged.
+- Calls on 2026-09-17: 17 for the photo corpus (6 wasted on a prompt that omitted the 0-100
+  scale, 1 timeout), 2 single-hex attributions later superseded by the batched prompt, then the
+  daily cap. All Gemini features stay on `gemini-3.6-flash`; the batched runs happen after the
+  next reset.
 - Latency: 1.1–12.7 s per call (median ~5 s); image calls are not noticeably slower than text.
 
 **Implication for the demo:** 5 RPM makes a live multi-photo demo fragile. Everything

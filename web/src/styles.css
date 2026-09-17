@@ -101,7 +101,62 @@ html, body, #root, .app { margin: 0; height: 100%; }
 }
 .tooltip .muted { color: var(--text-secondary); }
 
+.marker-explained { background: transparent; border: 2.5px solid #9a9993; box-shadow: 0 0 0 1px var(--surface-1); }
+.gemini { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; padding: 1px 6px; border-radius: 999px;
+  background: rgba(42, 120, 214, 0.1); color: #1c5cab; vertical-align: 1px; }
+
+.sensor { margin-top: 4px; }
+.thumbs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.thumb { padding: 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; cursor: pointer; background: none; aspect-ratio: 1; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb:hover { outline: 2px solid var(--accent); }
+.upload { display: inline-block; margin-top: 8px; font-size: 12px; color: var(--accent); cursor: pointer; }
+.upload input { display: block; margin-top: 4px; font-size: 11px; max-width: 100%; }
+
+.detail {
+  position: absolute;
+  z-index: 2;
+  top: 16px;
+  right: 16px;
+  width: min(390px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  overflow: auto;
+  padding: 16px 18px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.detail h2 { margin: 2px 0 6px; font-size: 17px; }
+.detail p { margin: 0 0 8px; }
+.detail .close { position: absolute; top: 8px; right: 10px; border: 0; background: none; font-size: 20px; color: var(--text-muted); cursor: pointer; }
+.eyebrow { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0; }
+.headline { font-size: 14px; }
+.small { font-size: 11.5px; }
+.muted { color: var(--text-secondary); }
+.warn { color: #9a4a17; }
+.section-title { margin: 12px 0 4px; font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+.source { font-size: 14px; font-weight: 600; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; }
+.badge-dot { width: 8px; height: 8px; border-radius: 50%; }
+.evidence { margin: 0 0 8px; padding-left: 16px; }
+.evidence li { margin-bottom: 3px; }
+.evidence-signal { font-weight: 600; }
+.evidence-value { font-variant-numeric: tabular-nums; }
+.uncertainty { background: #f3f2ee; border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
+.photo { width: 100%; border-radius: 6px; margin: 4px 0 6px; }
+.alert { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.tabs button { font: inherit; font-size: 11.5px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: none; cursor: pointer; color: var(--text-primary); }
+.tabs button.active { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+.tabs-spacer { flex: 1; }
+.alert-subject { font-weight: 600; }
+.alert-text { white-space: pre-wrap; }
+
 @media (max-width: 480px) {
+  .detail { top: auto; bottom: 16px; max-height: 60%; }
   .panel { top: auto; bottom: 16px; max-height: 45%; }
   .lede, .footnote { display: none; }
 }

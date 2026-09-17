@@ -127,6 +127,16 @@ def _load_key() -> str:
     return key
 
 
+def _daily_quota(payload: dict) -> str | None:
+    """quotaId of a per-day quota violation in a 429 body, if any."""
+    for detail in payload.get("error", {}).get("details", []):
+        if detail.get("@type", "").endswith("QuotaFailure"):
+            for violation in detail.get("violations", []):
+                if "PerDay" in violation.get("quotaId", ""):
+                    return f"{violation['quotaId']}, limit {violation.get('quotaValue')}"
+    return None
+
+
 def _retry_delay(payload: dict, default: float) -> float:
     for detail in payload.get("error", {}).get("details", []):
         if detail.get("@type", "").endswith("RetryInfo"):
@@ -191,6 +201,10 @@ def gemini(parts: list[dict], *, model: str = DEFAULT_MODEL, prompt_version: str
             break
         payload = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
         last_error = f"HTTP {resp.status_code}: {str(payload.get('error', {}).get('message', ''))[:200]}"
+        daily = _daily_quota(payload)
+        if daily:
+            # The daily window resets at midnight Pacific; retrying for minutes only hangs a batch.
+            raise RuntimeError(f"Gemini daily quota exhausted ({daily}); no retry. Resets at midnight Pacific.")
         if resp.status_code not in RETRY_STATUS or attempt == max_attempts:
             raise RuntimeError(f"Gemini call failed, {last_error}")
         wait = _retry_delay(payload, min(2 ** attempt, 60))
