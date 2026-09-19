@@ -45,7 +45,8 @@ API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_MODEL = "gemini-3.6-flash"  # 2.0/2.5 are retired for new keys (404 with an upgrade note)
 
 RETRY_STATUS = {429, 500, 502, 503, 504}
-MAX_ATTEMPTS = 5
+# Each retry is a request against the 20/day quota: lower this when the daily budget is tight.
+MAX_ATTEMPTS = int(os.environ.get("AEROGAP_GEMINI_MAX_ATTEMPTS", "5"))
 TIMEOUT = (20, 180)
 # Free tier is 5 requests/minute per project per model: space live requests so a batch never trips it.
 MIN_INTERVAL_S = float(os.environ.get("AEROGAP_GEMINI_MIN_INTERVAL_S", "12.5"))

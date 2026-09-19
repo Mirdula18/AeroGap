@@ -148,9 +148,11 @@ def main(argv: list[str] | None = None) -> int:
             payload = mock_dispatch(day, cell, facts, draft)
             entry["alert"] = {**draft, "would_send": payload["would_send"],
                               "authority_recipients": payload["authority_recipients"]}
-            print(f"  [{'WOULD SEND' if payload['would_send'] else 'draft only':<10}] {facts['district']}, {facts['state']}"
+            ok = draft.get("status") == "ok"
+            state = ("WOULD SEND" if payload["would_send"] else "draft only") if ok else f"FAILED ({draft.get('status')})"
+            print(f"  [{state:<10}] {facts['district']}, {facts['state']}"
                   f" | {facts['predicted_pm25_ug_m3']} µg/m³ {facts['predicted_category']} | {facts['urgency']}"
-                  f" | cached={draft.get('cached')} | checks: {draft.get('checks') or 'ok'}")
+                  + (f" | cached={draft.get('cached')} | checks: {draft.get('checks') or 'ok'}" if ok else ""))
             if draft.get("status") == "ok":
                 print(f"    subject: {draft['subject_en']}")
         (EXPLANATIONS / f"{day}.json").write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
