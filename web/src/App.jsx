@@ -483,6 +483,12 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <p className="consent">
+              <strong>Before you upload.</strong> Your photo is checked inside your browser and never leaves your
+              device in this demo. In the full pipeline it is re-encoded to strip EXIF (location, device, time) and
+              used only to estimate haze for this map — nothing else. Location is kept as a ~5 km hexagon, never an
+              address. No account, no tracking. Remove a reading from the map whenever you like.
+            </p>
             <label className="upload">
               Upload a sky photo
               <input type="file" accept="image/jpeg,image/png" onChange={onUpload} />
@@ -505,7 +511,11 @@ export default function App() {
       )}
       {selected?.kind === "photo" && (
         <PhotoPanel obs={selected.obs} prediction={selectedPrediction} fusion={selectedFusion}
-          photoUrl={`${STATIC_BASE}/${selected.obs.photo}`} onClose={() => setSelected(null)} />
+          photoUrl={`${STATIC_BASE}/${selected.obs.photo}`} onClose={() => setSelected(null)}
+          onRemove={() => {
+            setPhotos((prev) => prev.filter((p) => p.id !== selected.obs.id));
+            setSelected(null);
+          }} />
       )}
 
       {hover && (

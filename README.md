@@ -270,6 +270,10 @@ individually in [web/public/data/photos/CREDITS.md](web/public/data/photos/CREDI
   timestamp) before anything is sent to Gemini or stored. On the deployed map, an
   uploaded photo never leaves the browser at all: it is hashed locally and matched
   against cached results. No account, no login, no tracking.
+- **DPDP Act 2023 basics, in the interface.** A notice appears above the upload control
+  before any photo is chosen, stating what is collected, that location is kept only as a
+  ~5 km hexagon, and that the photo is used to estimate haze and nothing else. Any
+  reading a citizen contributes can be withdrawn from the map with one click.
 - **Alerts address roles, never people** — "District Collector, Kargil" — and are never
   actually dispatched in this build.
 - **Do no harm:** every prediction carries a confidence band; low-confidence areas fade

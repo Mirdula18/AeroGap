@@ -146,7 +146,7 @@ export function ExplanationPanel({ entry, fallback, onClose }) {
   );
 }
 
-export function PhotoPanel({ obs, fusion, prediction, photoUrl, onClose }) {
+export function PhotoPanel({ obs, fusion, prediction, photoUrl, onClose, onRemove }) {
   const c = obs.credit || {};
   return (
     <aside className="detail">
@@ -191,6 +191,9 @@ export function PhotoPanel({ obs, fusion, prediction, photoUrl, onClose }) {
             <p className="muted">Switch to the Predicted PM2.5 view to see how this photo shifts the estimate for its hexagon.</p>
           )}
         </>
+      )}
+      {onRemove && (
+        <button className="withdraw" onClick={onRemove}>Remove this reading from the map</button>
       )}
     </aside>
   );
