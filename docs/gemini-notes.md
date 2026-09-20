@@ -85,6 +85,46 @@ retryDelay:  6s
 **Implication for the demo:** 5 RPM makes a live multi-photo demo fragile. Everything
 replays from cache.
 
+## The production runs (2026-09-19/20)
+
+All three demo dates now have batched attribution and alerts in the cache.
+
+| Run | Requests | Successes | Notes |
+|---|---|---|---|
+| Attribution, 3 dates | 20 | 3 | 2026-09-10 first try; 2025-11-12 second; 2025-11-22 on the fourth retry round |
+| Alerts, 3 dates | 14 | 3 | all three landed in one round once capacity freed |
+
+**503 "high demand" was the real constraint, not the quota.** On 2026-09-19 the
+`gemini-3.6-flash` free tier refused ~35 consecutive requests over four hours with
+`503 The model is currently experiencing high demand`. It is unrelated to the 20/day
+cap: a request succeeded after 31 requests that day, so **rejected requests do not
+count against the daily quota** and retrying is free. What works is a retry loop
+spaced 15-20 minutes apart with `AEROGAP_GEMINI_MAX_ATTEMPTS=1`; tight retries
+inside one invocation all hit the same busy window and waste the run's wall clock.
+
+Plan for capacity, not just quota: anything that must be re-generated before a
+deadline needs hours of slack, and the disk cache is what makes a failed evening
+harmless.
+
+## Known weaknesses in the attribution output
+
+Recorded rather than re-run, to stay inside the daily budget. All are visible in
+`data/explanations/`:
+
+1. **Ganganagar, 2025-11-12 - probably wrong.** Called `dust` in stubble-burning
+   season while CO sat at the 100th percentile, which indicates combustion. The
+   prompt gives no rule for reading CO; it should.
+2. **Kargil, 2025-11-12 - invented detail.** The reasoning cites "valley terrain",
+   which is in no input signal. The grounding check validates signal *names* in
+   `evidence`, not free text in `reasoning`, so it passed with zero warnings.
+3. **South 24 Parganas, 2025-11-22 - missing treated as absent.** Null upwind-fire
+   data was used to "rule out" biomass burning. Absent data is not evidence of
+   absence; the prompt should say so.
+
+The grounding check catches fabricated signal names, not fabricated reasoning. Both
+of the free-text problems above are one prompt rule away from being fixed, and neither
+changes the dominant source on the demo hexes except possibly Ganganagar.
+
 ## The cache (`utils/llm_cache.py`)
 
 Every Gemini call goes through it. No exceptions.
