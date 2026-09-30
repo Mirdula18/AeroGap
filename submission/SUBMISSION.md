@@ -2,7 +2,6 @@
 
 Everything needed to fill in the Hack2skill form, plus the deck content in plain text as a
 backup. Deck file: `AeroGap-pitch-deck.pptx` (12 slides, speaker notes on every slide).
-
 ## Links
 
 | Item | Value |
